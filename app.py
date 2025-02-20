@@ -1,6 +1,5 @@
 import gradio as gr
 import requests
-import os
 
 def download_file(url):
     try:
@@ -12,22 +11,20 @@ def download_file(url):
         
         # Check if the request was successful
         if response.status_code == 200:
-            # Save the file to the current working directory
-            with open(file_name, "wb") as file:
-                file.write(response.content)
-            return f"File '{file_name}' downloaded successfully!"
+            # Return the file content and the file name for download
+            return response.content, file_name
         else:
-            return f"Failed to download file. Status code: {response.status_code}"
+            return f"Failed to download file. Status code: {response.status_code}", None
     except Exception as e:
-        return f"An error occurred: {str(e)}"
+        return f"An error occurred: {str(e)}", None
 
 # Create a Gradio interface
 iface = gr.Interface(
     fn=download_file,
     inputs="text",
-    outputs="text",
+    outputs=[gr.File(label="Downloaded File"), "text"],
     title="File Downloader",
-    description="Enter the URL of a file to download it."
+    description="Enter the URL of a file to download it. The file will be saved to your default downloads folder."
 )
 
 # Launch the app
