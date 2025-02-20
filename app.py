@@ -1,35 +1,50 @@
 import gradio as gr
 import requests
+from bs4 import BeautifulSoup
 
-def search_books(query):
-    url = f"https://openlibrary.org/search.json?q={query}&limit=5"
-    response = requests.get(url)
-    data = response.json()
-    
-    results = []
-    for book in data.get("docs", []):
-        title = book.get("title", "Unknown Title")
-        author = ", ".join(book.get("author_name", ["Unknown Author"]))
-        olid = book.get("cover_edition_key") or book.get("edition_key", [None])[0]
-        
-        if olid:
-            book_url = f"https://openlibrary.org/books/{olid}"
-            borrow_url = f"https://openlibrary.org/borrow/ia/{olid}" if book.get("ia") else None
-            
-            if "public_scan" in book and book["public_scan"]:
-                download_url = f"https://archive.org/download/{book['ia'][0]}"
-                results.append(f"📖 [{title}]({book_url}) by {author} - [Download]({download_url})")
-            else:
-                results.append(f"📖 [{title}]({book_url}) by {author} - [Borrow]({borrow_url})" if borrow_url else f"📖 [{title}]({book_url}) by {author}")
-    
-    return "\n".join(results) if results else "No books found."
+def search_and_download_book(phrase):
+    # Search Project Gutenberg for books containing the phrase
+    search_url = f"https://www.gutenberg.org/ebooks/search/?query={phrase}&submit_search=Go!"
+    response = requests.get(search_url)
+    soup = BeautifulSoup(response.text, 'html.parser')
 
+    # Find the first book link
+    book_link = soup.find('a', class_='link', href=True)
+    if not book_link:
+        return "No books found containing the phrase."
+
+    book_url = "https://www.gutenberg.org" + book_link['href']
+
+    # Fetch the book page to get the download link
+    book_page = requests.get(book_url)
+    book_soup = BeautifulSoup(book_page.text, 'html.parser')
+
+    # Find the download link (assuming plain text format)
+    download_link = book_soup.find('a', href=True, string='Plain Text UTF-8')
+    if not download_link:
+        return "Download link not found."
+
+    download_url = "https://www.gutenberg.org" + download_link['href']
+
+    # Download the book
+    book_response = requests.get(download_url)
+    if book_response.status_code != 200:
+        return "Failed to download the book."
+
+    # Save the book to a file
+    book_filename = f"{phrase.replace(' ', '_')}.txt"
+    with open(book_filename, 'wb') as f:
+        f.write(book_response.content)
+
+    return f"Book downloaded successfully: {book_filename}"
+
+# Gradio interface
 iface = gr.Interface(
-    fn=search_books,
-    inputs=gr.Textbox(label="Search for a book"),
-    outputs=gr.Markdown(),
-    title="Book Finder",
-    description="Search for books from Open Library. Click links to read, borrow, or download legally."
+    fn=search_and_download_book,
+    inputs="text",
+    outputs="text",
+    title="Public Domain Book Downloader",
+    description="Enter a phrase to search for a book in the public domain and download it."
 )
 
 iface.launch()
