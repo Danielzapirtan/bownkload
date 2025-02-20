@@ -1,35 +1,34 @@
 import gradio as gr
 import requests
+import os
 
-def search_books(query):
-    url = f"https://openlibrary.org/search.json?q={query}&limit=5"
-    response = requests.get(url)
-    data = response.json()
-    
-    results = []
-    for book in data.get("docs", []):
-        title = book.get("title", "Unknown Title")
-        author = ", ".join(book.get("author_name", ["Unknown Author"]))
-        olid = book.get("cover_edition_key") or book.get("edition_key", [None])[0]
+def download_file(url):
+    try:
+        # Extract the file name from the URL
+        file_name = url.split("/")[-1]
         
-        if olid:
-            book_url = f"https://openlibrary.org/books/{olid}"
-            borrow_url = f"https://openlibrary.org/borrow/ia/{olid}" if book.get("ia") else None
-            
-            if "public_scan" in book and book["public_scan"]:
-                download_url = f"https://archive.org/download/{book['ia'][0]}"
-                results.append(f"📖 [{title}]({book_url}) by {author} - [Download]({download_url})")
-            else:
-                results.append(f"📖 [{title}]({book_url}) by {author} - [Borrow]({borrow_url})" if borrow_url else f"📖 [{title}]({book_url}) by {author}")
-    
-    return "\n".join(results) if results else "No books found."
+        # Send a GET request to the URL
+        response = requests.get(url)
+        
+        # Check if the request was successful
+        if response.status_code == 200:
+            # Save the file to the current working directory
+            with open(file_name, "wb") as file:
+                file.write(response.content)
+            return f"File '{file_name}' downloaded successfully!"
+        else:
+            return f"Failed to download file. Status code: {response.status_code}"
+    except Exception as e:
+        return f"An error occurred: {str(e)}"
 
+# Create a Gradio interface
 iface = gr.Interface(
-    fn=search_books,
-    inputs=gr.Textbox(label="Search for a book"),
-    outputs=gr.Markdown(),
-    title="Book Finder",
-    description="Search for books from Open Library. Click links to read, borrow, or download legally."
+    fn=download_file,
+    inputs="text",
+    outputs="text",
+    title="File Downloader",
+    description="Enter the URL of a file to download it."
 )
 
+# Launch the app
 iface.launch()
