@@ -7,7 +7,7 @@ app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 
 # Directory to save downloaded files
-DOWNLOAD_DIR = "downloads"
+DOWNLOAD_DIR = "/tmp/downloads"
 if not os.path.exists(DOWNLOAD_DIR):
     os.makedirs(DOWNLOAD_DIR)
 
@@ -39,4 +39,4 @@ def download_file():
         return jsonify({"error": f"Failed to download the file: {str(e)}"}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, host='0.0.0.0', port=5045)
