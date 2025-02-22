@@ -1,31 +1,42 @@
-import gradio as gr
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 import requests
+import os
 
-def download_file(url):
+app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
+
+# Directory to save downloaded files
+DOWNLOAD_DIR = "downloads"
+if not os.path.exists(DOWNLOAD_DIR):
+    os.makedirs(DOWNLOAD_DIR)
+
+@app.route('/download', methods=['POST'])
+def download_file():
+    # Get the URL from the request
+    data = request.json
+    url = data.get('url')
+
+    if not url:
+        return jsonify({"error": "URL is required"}), 400
+
     try:
-        # Extract the file name from the URL
-        file_name = url.split("/")[-1]
-        
         # Send a GET request to the URL
-        response = requests.get(url)
-        
-        # Check if the request was successful
-        if response.status_code == 200:
-            # Return the file content and the file name for download
-            return response.content, file_name
-        else:
-            return f"Failed to download file. Status code: {response.status_code}", None
-    except Exception as e:
-        return f"An error occurred: {str(e)}", None
+        response = requests.get(url, stream=True)
+        response.raise_for_status()  # Raise an error for bad status codes
 
-# Create a Gradio interface
-iface = gr.Interface(
-    fn=download_file,
-    inputs="text",
-    outputs=[gr.File(label="Downloaded File"), "text"],
-    title="File Downloader",
-    description="Enter the URL of a file to download it. The file will be saved to your default downloads folder."
-)
+        # Extract the filename from the URL
+        filename = os.path.join(DOWNLOAD_DIR, url.split('/')[-1])
 
-# Launch the app
-iface.launch()
+        # Save the file
+        with open(filename, 'wb') as file:
+            for chunk in response.iter_content(chunk_size=8192):
+                file.write(chunk)
+
+        return jsonify({"message": f"File downloaded successfully: {filename}"}), 200
+
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": f"Failed to download the file: {str(e)}"}), 500
+
+if __name__ == '__main__':
+    app.run(debug=True)
