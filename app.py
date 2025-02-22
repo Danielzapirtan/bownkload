@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 import requests
 import os
@@ -7,9 +7,14 @@ app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 
 # Directory to save downloaded files
-DOWNLOAD_DIR = "/tmp/downloads"
+DOWNLOAD_DIR = "downloads"
 if not os.path.exists(DOWNLOAD_DIR):
     os.makedirs(DOWNLOAD_DIR)
+
+@app.route('/')
+def index():
+    # Render the index.html template
+    return render_template('index.html')
 
 @app.route('/download', methods=['POST'])
 def download_file():
@@ -39,4 +44,4 @@ def download_file():
         return jsonify({"error": f"Failed to download the file: {str(e)}"}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5045)
+    app.run(host='localhost', port=5045, debug=True)
