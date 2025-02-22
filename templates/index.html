@@ -3,80 +3,89 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>URL Downloader</title>
+    <title>File Downloader</title>
     <style>
         body {
             font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            background-color: #f4f4f4;
+            margin: 50px;
         }
         .container {
-            background: #fff;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-            width: 300px;
+            max-width: 500px;
+            margin: 0 auto;
             text-align: center;
         }
-        input[type="url"] {
+        input[type="text"] {
             width: 100%;
             padding: 10px;
-            margin: 10px 0;
+            margin-bottom: 10px;
             border: 1px solid #ccc;
-            border-radius: 4px;
+            border-radius: 5px;
         }
         button {
             padding: 10px 20px;
             background-color: #007bff;
-            color: #fff;
+            color: white;
             border: none;
-            border-radius: 4px;
+            border-radius: 5px;
             cursor: pointer;
         }
         button:hover {
             background-color: #0056b3;
         }
+        .message {
+            margin-top: 20px;
+            color: green;
+        }
+        .error {
+            margin-top: 20px;
+            color: red;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h2>URL Downloader</h2>
-        <input type="url" id="urlInput" placeholder="Enter URL here" required>
-        <button onclick="downloadContent()">Download</button>
+        <h1>File Downloader</h1>
+        <p>Enter the URL of the file you want to download:</p>
+        <input type="text" id="url" placeholder="https://example.com/file.zip">
+        <button onclick="downloadFile()">Download</button>
+        <div id="message" class="message"></div>
+        <div id="error" class="error"></div>
     </div>
 
     <script>
-        function downloadContent() {
-            const url = document.getElementById('urlInput').value;
+        async function downloadFile() {
+            const url = document.getElementById('url').value;
+            const messageDiv = document.getElementById('message');
+            const errorDiv = document.getElementById('error');
+
+            // Clear previous messages
+            messageDiv.textContent = '';
+            errorDiv.textContent = '';
+
             if (!url) {
-                alert('Please enter a valid URL.');
+                errorDiv.textContent = 'Please enter a valid URL.';
                 return;
             }
 
-            fetch(url)
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error('Network response was not ok');
-                    }
-                    return response.blob();
-                })
-                .then(blob => {
-                    const link = document.createElement('a');
-                    link.href = URL.createObjectURL(blob);
-                    link.download = 'downloaded-file';
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                })
-                .catch(error => {
-                    console.error('There was a problem with the fetch operation:', error);
-                    alert('Failed to download the content. Please check the URL and try again.');
+            try {
+                const response = await fetch('http://localhost:5045/download', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ url }),
                 });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    messageDiv.textContent = result.message;
+                } else {
+                    errorDiv.textContent = result.error;
+                }
+            } catch (error) {
+                errorDiv.textContent = 'An error occurred while downloading the file.';
+            }
         }
     </script>
 </body>
