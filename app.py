@@ -7,7 +7,7 @@ app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 
 # Directory to save downloaded files
-DOWNLOAD_DIR = "downloads"
+DOWNLOAD_DIR = "/tmp/downloads"
 if not os.path.exists(DOWNLOAD_DIR):
     os.makedirs(DOWNLOAD_DIR)
 
