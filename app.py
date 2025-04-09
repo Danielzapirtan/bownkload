@@ -1,113 +1,66 @@
 import gradio as gr
-import requests
-from bs4 import BeautifulSoup
-from urllib.parse import urlparse
-import os
-import tempfile
-from pytube import YouTube
-import re
+from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
 
-def is_youtube_url(url):
-    youtube_regex = (
-        r'(https?://)?(www\.)?'
-        '(youtube|youtu|youtube-nocookie)\.(com|be)/'
-        '(watch\?v=|embed/|v/|.+\?v=)?([^&=%\?]{11})')
-    return re.match(youtube_regex, url) is not None
-
-def download_youtube_video(url):
+def get_transcript(video_url, language_code='en'):
+    """
+    Fetches transcript using youtube-transcript-api (no scraping, uses YouTube's system).
+    Handles errors gracefully and respects fair use.
+    """
     try:
-        yt = YouTube(url)
-        stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
+        # Extract video ID from URL
+        video_id = video_url.split("v=")[-1].split("&")[0]
         
-        if not stream:
-            return None, "No suitable video stream found"
+        # Fetch available transcripts
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        transcript = transcript_list.find_transcript([language_code])
         
-        temp_dir = tempfile.mkdtemp()
-        file_path = stream.download(output_path=temp_dir)
-        return file_path, f"Successfully downloaded YouTube video: {yt.title}"
-    
+        # Fetch the actual transcript
+        transcript_text = "\n".join([t['text'] for t in transcript.fetch()])
+        
+        # Metadata for attribution
+        metadata = f"Video: {video_url}\nLanguage: {transcript.language_code}\n\n"
+        return metadata + transcript_text
+        
+    except TranscriptsDisabled:
+        return "Error: Transcripts are disabled for this video."
+    except NoTranscriptFound:
+        return "Error: No transcript found for the selected language."
     except Exception as e:
-        return None, f"YouTube download error: {str(e)}"
+        return f"Error: {str(e)}"
 
-def download_file(url):
-    # First check if it's a YouTube URL
-    if is_youtube_url(url):
-        return download_youtube_video(url)
-    
-    try:
-        # Regular file download logic
-        response = requests.get(url, stream=True)
-        response.raise_for_status()
-        
-        # Check if HTML content (might be a shared page)
-        content_type = response.headers.get('content-type', '')
-        if 'text/html' in content_type:
-            soup = BeautifulSoup(response.text, 'html.parser')
-            file_links = []
-            
-            # Look for common file download links
-            for tag in soup.find_all(['a', 'link']):
-                href = tag.get('href', '')
-                if any(href.lower().endswith(ext) for ext in ['.pdf', '.mp4', '.mp3', '.zip', '.rar', '.exe', '.dmg', '.png', '.jpg', '.jpeg', '.gif']):
-                    file_links.append(href)
-            
-            if file_links:
-                base_url = f"{urlparse(url).scheme}://{urlparse(url).netloc}"
-                file_url = file_links[0] if file_links[0].startswith('http') else base_url + file_links[0]
-                response = requests.get(file_url, stream=True)
-                response.raise_for_status()
-            else:
-                return None, "No downloadable files found in the HTML page"
-        
-        # Get filename
-        filename = os.path.basename(urlparse(url).path)
-        if not filename:
-            if 'content-disposition' in response.headers:
-                content_disposition = response.headers['content-disposition']
-                filename = content_disposition.split('filename=')[1].strip('"\'')
-            else:
-                filename = 'downloaded_file'
-        
-        # Save to temporary file
-        temp_dir = tempfile.mkdtemp()
-        file_path = os.path.join(temp_dir, filename)
-        
-        with open(file_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-        
-        return file_path, f"Successfully downloaded: {filename}"
-    
-    except requests.exceptions.RequestException as e:
-        return None, f"Error downloading file: {str(e)}"
-    except Exception as e:
-        return None, f"An error occurred: {str(e)}"
-
-def download_and_display(url):
-    file_path, message = download_file(url)
-    if file_path:
-        return file_path, message
-    else:
-        return None, message
-
-with gr.Blocks() as app:
-    gr.Markdown("## Universal File Downloader")
-    gr.Markdown("Enter a URL to download files or YouTube videos")
+# Gradio UI
+with gr.Blocks(title="YouTube Transcript Extractor") as app:
+    gr.Markdown("""
+    ## 📜 YouTube Transcript Extractor  
+    **Fair Use Notice**: This tool extracts *publicly available* transcripts for **personal/educational use**.  
+    Do not redistribute content without permission.  
+    """)
     
     with gr.Row():
-        url_input = gr.Textbox(label="URL", placeholder="https://example.com/file.pdf or YouTube URL")
-        download_btn = gr.Button("Download")
+        video_url = gr.Textbox(label="YouTube Video URL", placeholder="Paste a YouTube link...")
+        language = gr.Dropdown(
+            label="Language", 
+            choices=["en", "es", "fr", "de", "ja"],  # Add more as needed
+            value="en"
+        )
     
-    with gr.Row():
-        message_output = gr.Textbox(label="Status")
-        file_output = gr.File(label="Downloaded Content")
+    btn = gr.Button("Get Transcript")
+    output = gr.Textbox(label="Transcript", interactive=False)
     
-    download_btn.click(
-        fn=download_and_display,
-        inputs=url_input,
-        outputs=[file_output, message_output]
+    # Warning footer
+    gr.Markdown("""
+    ⚠️ **Disclaimer**:  
+    - This tool does not store transcripts.  
+    - Only use transcripts for **fair use purposes** (research, education, accessibility).  
+    - Respect copyright laws.  
+    """)
+    
+    btn.click(
+        fn=get_transcript,
+        inputs=[video_url, language],
+        outputs=output
     )
 
 if __name__ == "__main__":
-    app.launch(debug=True)
+    app.launch()
