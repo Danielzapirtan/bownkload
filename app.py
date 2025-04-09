@@ -4,7 +4,6 @@ from youtube_transcript_api._errors import (
     TranscriptsDisabled,
     NoTranscriptFound,
     VideoUnavailable,
-    TooManyRequests
 )
 
 def get_transcript(video_url: str, language_code: str = "en") -> str:
