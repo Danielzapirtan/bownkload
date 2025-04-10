@@ -3,8 +3,7 @@ from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import (
     TranscriptsDisabled,
     NoTranscriptFound,
-    VideoUnavailable,
-    TooManyRequests
+    VideoUnavailable
 )
 
 def get_transcript(video_url: str, language_code: str = "en") -> str:
