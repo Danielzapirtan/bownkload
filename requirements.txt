@@ -1,4 +1,4 @@
 yt-dlp
 openai-whisper
-gradio=3.36.1
+gradio==3.38.0
 pytube
