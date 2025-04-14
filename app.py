@@ -3,14 +3,14 @@ import os
 from pytube import YouTube
 from pytube.exceptions import PytubeError, VideoUnavailable, RegexMatchError
 import yt_dlp
-from whisper import load_model
+import whisper  # Changed from 'from whisper import load_model'
 import tempfile
 import traceback
 from pathlib import Path
 import re
 
 # Load Whisper model
-whisper_model = load_model("base")  # Can change to "small", "medium", etc.
+whisper_model = whisper.load_model("base")  # Can change to "small", "medium", etc.
 
 def is_valid_url(url):
     """Basic URL validation"""
@@ -23,7 +23,7 @@ def is_valid_url(url):
         r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|'
         r'[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+')
     
-    return re.match(youtube_regex, url) or re.match(generic_url_regex, url)
+    return bool(re.match(youtube_regex, url) or re.match(generic_url_regex, url))
 
 def is_youtube_url(url):
     return "youtube.com" in url or "youtu.be" in url
@@ -45,19 +45,26 @@ def download_yt_with_pytube(video_url, temp_dir):
         if not audio_stream:
             raise PytubeError("No audio stream available")
         
-        output_path = os.path.join(temp_dir, "audio.mp3")
-        print(f"Downloading with pytube to: {output_path}")
-        audio_stream.download(output_path=temp_dir, filename="audio.mp3")
+        output_file = "audio.mp3"
+        print(f"Downloading with pytube to: {os.path.join(temp_dir, output_file)}")
         
-        if not os.path.exists(output_path):
-            # Sometimes pytube downloads as mp4
-            temp_path = os.path.join(temp_dir, "audio.mp4")
-            if os.path.exists(temp_path):
-                os.rename(temp_path, output_path)
-            else:
-                raise PytubeError("Downloaded file not found")
+        # Download file (pytube might save as mp4 even if we request mp3)
+        audio_file_path = audio_stream.download(output_path=temp_dir, filename=output_file)
         
-        return output_path
+        # Ensure we return the correct path to the file that was actually downloaded
+        if not os.path.exists(audio_file_path):
+            # Check for alternate extensions
+            for ext in ['.mp4', '.webm', '.m4a']:
+                alt_path = os.path.join(temp_dir, f"audio{ext}")
+                if os.path.exists(alt_path):
+                    # Rename to expected .mp3 extension
+                    mp3_path = os.path.join(temp_dir, "audio.mp3")
+                    os.rename(alt_path, mp3_path)
+                    return mp3_path
+            
+            raise PytubeError("Downloaded file not found")
+        
+        return audio_file_path
     except RegexMatchError:
         raise gr.Error("Invalid YouTube URL format")
     except VideoUnavailable as e:
@@ -68,6 +75,8 @@ def download_yt_with_pytube(video_url, temp_dir):
 
 def download_with_ytdlp(video_url, temp_dir):
     try:
+        output_template = os.path.join(temp_dir, 'audio')
+        
         ydl_opts = {
             'format': 'bestaudio/best',
             'postprocessors': [{
@@ -75,7 +84,7 @@ def download_with_ytdlp(video_url, temp_dir):
                 'preferredcodec': 'mp3',
                 'preferredquality': '192',
             }],
-            'outtmpl': os.path.join(temp_dir, 'audio'),
+            'outtmpl': output_template,
             'quiet': True,
             'ignoreerrors': True,
             'no_warnings': True,
@@ -115,8 +124,13 @@ def download_with_ytdlp(video_url, temp_dir):
                     raise
         
         # Find the downloaded file
+        expected_file = output_template + '.mp3'
+        if os.path.exists(expected_file):
+            return expected_file
+            
+        # If the expected file isn't found, search for any audio file
         for file in os.listdir(temp_dir):
-            if file.startswith("audio."):
+            if file.startswith("audio"):
                 return os.path.join(temp_dir, file)
         
         raise gr.Error("Failed to download audio - no valid file found")
@@ -171,7 +185,9 @@ def transcribe_audio(audio_file_path):
             temp_dir = os.path.dirname(audio_file_path)
             try:
                 os.remove(audio_file_path)
-                os.rmdir(temp_dir)
+                # Only remove directory if it's empty
+                if not os.listdir(temp_dir):
+                    os.rmdir(temp_dir)
             except:
                 pass
 
@@ -192,7 +208,11 @@ def process_video_url(video_url, progress=gr.Progress()):
         
         progress(1.0, desc="Complete!")
         return transcription
+    except gr.Error as e:
+        # Pass through Gradio errors directly
+        raise
     except Exception as e:
+        traceback.print_exc()
         raise gr.Error(str(e))
 
 # Create Gradio interface
@@ -215,8 +235,6 @@ with gr.Blocks(title="Video Transcription", theme="soft") as app:
             )
         with gr.Column(scale=1):
             submit_btn = gr.Button("Transcribe", variant="primary")
-    
-    error_box = gr.Textbox(label="Error", visible=False)
     
     with gr.Row():
         output_text = gr.Textbox(
