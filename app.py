@@ -121,7 +121,7 @@ def create_demo() -> gr.Blocks:
                 
                 # Timer and progress bar
                 timer = gr.Textbox(label="Processing Time", interactive=False)
-                progress_bar = gr.Progress()
+                progress_bar = gr.State(0)
         
         # Event handlers
         submit_btn.click(
