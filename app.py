@@ -211,7 +211,7 @@ def transcribe_audio(audio_file_path, model_size, language):
             except:
                 pass
 
-def process_video_url(video_url, model_size, language, progress=gr.Progress()):
+def process_video_url(video_url, model_size, progress=gr.Progress()):
     try:
         if not video_url.strip():
             raise gr.Error("Please enter a video URL")
@@ -224,8 +224,8 @@ def process_video_url(video_url, model_size, language, progress=gr.Progress()):
         
         # Transcribe
         progress(0.6, desc=f"Loading {model_size} model...")
-        progress(0.7, desc=f"Transcribing audio in {language if language != 'auto' else 'auto-detected language'}...")
-        transcription = transcribe_audio(audio_file, model_size, language)
+        progress(0.7, desc="Transcribing audio with auto-detected language...")
+        transcription = transcribe_audio(audio_file, model_size, "auto")
         
         progress(1.0, desc="Complete!")
         return transcription
