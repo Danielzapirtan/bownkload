@@ -1,11 +1,9 @@
 import gradio as gr
-import openai
 import whisper
 import re
 import os
 import time
 from urllib.request import urlretrieve
-from typing import Optional
 from pathlib import Path
 
 # Predefined clickable URL examples
@@ -48,14 +46,12 @@ def transcribe(
     try:
         start_time = time.time()
         
-        # Show loading spinner while model loads
-        with gr.Spinner(text=f"Loading Whisper {model_size} model..."):
-            model = whisper.load_model(model_size)
+        # Load model without spinner
+        model = whisper.load_model(model_size)
         
         # Determine if input is URL or file
         if is_valid_url(input_source):
-            with gr.Spinner(text="Downloading media from URL..."):
-                media_path = download_from_url(input_source)
+            media_path = download_from_url(input_source)
         else:
             media_path = input_source
         
@@ -96,7 +92,7 @@ def create_demo() -> gr.Blocks:
                 file_upload = gr.File(
                     label="Or upload file",
                     file_types=["audio", "video"],
-                    type="file"
+                    type="filepath"
                 )
                 
                 # Model selection
@@ -121,7 +117,7 @@ def create_demo() -> gr.Blocks:
                 
                 # Timer and progress bar
                 timer = gr.Textbox(label="Processing Time", interactive=False)
-                progress_bar = gr.State(0)
+                progress_bar = gr.Progress()
         
         # Event handlers
         submit_btn.click(
@@ -170,4 +166,4 @@ def create_demo() -> gr.Blocks:
 
 if __name__ == "__main__":
     demo = create_demo()
-    demo.launch(share=True, debug=True)
+    demo.launch()
