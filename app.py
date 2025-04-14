@@ -9,8 +9,19 @@ import traceback
 from pathlib import Path
 import re
 
-# Load Whisper model
-whisper_model = whisper.load_model("base")  # Can change to "small", "medium", etc.
+# Global variable to store the current model
+current_model = None
+
+def load_whisper_model(model_size):
+    """Load or switch the Whisper model"""
+    global current_model
+    
+    # Only load if different from current model
+    if current_model is None or current_model.model_size != model_size:
+        print(f"Loading Whisper model: {model_size}")
+        current_model = whisper.load_model(model_size)
+    
+    return current_model
 
 def is_valid_url(url):
     """Basic URL validation"""
@@ -169,12 +180,21 @@ def download_and_convert_to_mp3(video_url):
                 pass
         raise
 
-def transcribe_audio(audio_file_path):
+def transcribe_audio(audio_file_path, model_size, language):
     if not audio_file_path or not os.path.exists(audio_file_path):
         raise gr.Error("No valid audio file found")
     
     try:
-        result = whisper_model.transcribe(audio_file_path)
+        # Load the appropriate model
+        model = load_whisper_model(model_size)
+        
+        # Set transcription options based on language selection
+        options = {}
+        if language != "auto":
+            options["language"] = language
+        
+        # Transcribe with the selected options
+        result = model.transcribe(audio_file_path, **options)
         return result["text"]
     except Exception as e:
         traceback.print_exc()
@@ -191,7 +211,7 @@ def transcribe_audio(audio_file_path):
             except:
                 pass
 
-def process_video_url(video_url, progress=gr.Progress()):
+def process_video_url(video_url, model_size, language, progress=gr.Progress()):
     try:
         if not video_url.strip():
             raise gr.Error("Please enter a video URL")
@@ -203,8 +223,9 @@ def process_video_url(video_url, progress=gr.Progress()):
         audio_file = download_and_convert_to_mp3(video_url)
         
         # Transcribe
-        progress(0.7, desc="Transcribing audio...")
-        transcription = transcribe_audio(audio_file)
+        progress(0.6, desc=f"Loading {model_size} model...")
+        progress(0.7, desc=f"Transcribing audio in {language if language != 'auto' else 'auto-detected language'}...")
+        transcription = transcribe_audio(audio_file, model_size, language)
         
         progress(1.0, desc="Complete!")
         return transcription
@@ -214,6 +235,15 @@ def process_video_url(video_url, progress=gr.Progress()):
     except Exception as e:
         traceback.print_exc()
         raise gr.Error(str(e))
+
+# Define language mapping for UI
+LANGUAGE_OPTIONS = {
+    "auto": "Auto-detect language",
+    "en": "English",
+    "ro": "Romanian",
+    "fr": "French", 
+    "de": "German"
+}
 
 # Create Gradio interface
 with gr.Blocks(title="Video Transcription", theme="soft") as app:
@@ -237,6 +267,22 @@ with gr.Blocks(title="Video Transcription", theme="soft") as app:
             submit_btn = gr.Button("Transcribe", variant="primary")
     
     with gr.Row():
+        with gr.Column(scale=1):
+            model_dropdown = gr.Dropdown(
+                ["tiny", "base", "small", "medium", "large"],
+                value="base",
+                label="Whisper Model Size",
+                info="Larger models are more accurate but slower"
+            )
+        with gr.Column(scale=1):
+            language_dropdown = gr.Dropdown(
+                list(LANGUAGE_OPTIONS.keys()),
+                value="auto",
+                label="Language",
+                info="Select 'auto' to let Whisper detect the language"
+            )
+    
+    with gr.Row():
         output_text = gr.Textbox(
             label="Transcription",
             interactive=True,
@@ -256,11 +302,32 @@ with gr.Blocks(title="Video Transcription", theme="soft") as app:
             label="Try these examples (click to load)"
         )
     
+    # Display selected language name (not code)
+    language_dropdown.change(
+        fn=lambda lang: gr.Dropdown.update(info=f"Selected: {LANGUAGE_OPTIONS[lang]}"),
+        inputs=language_dropdown,
+        outputs=language_dropdown
+    )
+    
+    # Process button click
     submit_btn.click(
         fn=process_video_url,
-        inputs=video_url,
+        inputs=[video_url, model_dropdown, language_dropdown],
         outputs=output_text,
     )
+    
+    # Add information about model sizes
+    gr.Markdown("""
+    ### About Model Sizes
+    - **tiny**: Fastest, lowest accuracy (1GB VRAM)
+    - **base**: Good balance for most cases (1GB VRAM)
+    - **small**: Better accuracy, medium speed (2GB VRAM)
+    - **medium**: High accuracy, slower (5GB VRAM)
+    - **large**: Highest accuracy, slowest (10GB VRAM)
+    
+    ### Supported Languages
+    Auto-detect, English, Romanian, French, and German
+    """)
 
 if __name__ == "__main__":
     # Check if yt-dlp is up to date
@@ -269,5 +336,11 @@ if __name__ == "__main__":
             ydl.update()
     except:
         print("Could not update yt-dlp, continuing with current version")
+    
+    # Pre-load the base model on startup
+    try:
+        load_whisper_model("base")
+    except Exception as e:
+        print(f"Warning: Failed to pre-load Whisper model: {e}")
     
     app.launch()
