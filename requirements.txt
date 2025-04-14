@@ -1,3 +1,4 @@
+ffmpeg
 yt-dlp
 openai-whisper
 gradio==3.38.0
