@@ -1,7 +1,7 @@
 import gradio as gr
 import os
 from pytube import YouTube
-from pytube.exceptions import PytubeError
+from pytube.exceptions import PytubeError, VideoUnavailable
 import yt_dlp
 from whisper import load_model
 import tempfile
@@ -11,23 +11,39 @@ from pathlib import Path
 # Load Whisper model
 whisper_model = load_model("base")  # Can change to "small", "medium", etc.
 
+def is_youtube_url(url):
+    return "youtube.com" in url or "youtu.be" in url
+
 def download_yt_with_pytube(video_url, temp_dir):
     try:
         yt = YouTube(video_url)
+        
+        # Check if video is available
+        if yt.vid_info.get('playabilityStatus', {}).get('status', '').lower() == 'error':
+            raise VideoUnavailable(yt.vid_info['playabilityStatus']['reason'])
+        
+        # Skip live streams
+        if yt.vid_info.get('videoDetails', {}).get('isLive', False):
+            raise PytubeError("Live streams are not supported")
+        
         audio_stream = yt.streams.filter(only_audio=True).order_by('abr').desc().first()
         if not audio_stream:
-            raise PytubeError("No audio stream found")
+            raise PytubeError("No audio stream available")
         
         output_path = os.path.join(temp_dir, "audio.mp3")
         audio_stream.download(output_path=temp_dir, filename="audio.mp3")
         
         if not os.path.exists(output_path):
-            # Sometimes pytube downloads as mp4 even when we request mp3
+            # Sometimes pytube downloads as mp4
             temp_path = os.path.join(temp_dir, "audio.mp4")
             if os.path.exists(temp_path):
                 os.rename(temp_path, output_path)
+            else:
+                raise PytubeError("Downloaded file not found")
         
         return output_path
+    except VideoUnavailable as e:
+        raise gr.Error(f"YouTube video unavailable: {str(e)}")
     except Exception as e:
         raise gr.Error(f"Pytube error: {str(e)}")
 
@@ -42,9 +58,23 @@ def download_with_ytdlp(video_url, temp_dir):
             }],
             'outtmpl': os.path.join(temp_dir, 'audio'),
             'quiet': True,
+            'ignoreerrors': True,
+            'no_warnings': True,
+            'extract_flat': True,
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=False)
+            if not info:
+                raise gr.Error("Could not extract video info")
+            
+            # Skip live streams
+            if info.get('is_live', False):
+                raise gr.Error("Live streams are not supported")
+            
+            if info.get('_type', 'video') != 'video':
+                raise gr.Error("Only single videos are supported (not playlists)")
+            
             ydl.download([video_url])
         
         # Find the downloaded file
@@ -60,15 +90,14 @@ def download_and_convert_to_mp3(video_url):
     temp_dir = tempfile.mkdtemp()
     
     try:
-        # Try pytube first for YouTube URLs
-        if "youtube.com" in video_url or "youtu.be" in video_url:
+        if is_youtube_url(video_url):
             try:
                 return download_yt_with_pytube(video_url, temp_dir)
             except Exception as pytube_error:
                 print(f"Pytube failed, falling back to yt-dlp: {pytube_error}")
-        
-        # Fall back to yt-dlp for all URLs
-        return download_with_ytdlp(video_url, temp_dir)
+                return download_with_ytdlp(video_url, temp_dir)
+        else:
+            return download_with_ytdlp(video_url, temp_dir)
     except Exception as e:
         # Clean up temp dir if error occurs
         if os.path.exists(temp_dir):
@@ -122,6 +151,8 @@ with gr.Blocks(title="Video Transcription", theme="soft") as app:
     gr.Markdown("""
     # 🎥 Video to Transcription
     Convert YouTube or other video URLs to text using Whisper AI
+    
+    **Note**: Live streams and age-restricted videos may not work
     """)
     
     with gr.Row():
@@ -133,6 +164,8 @@ with gr.Blocks(title="Video Transcription", theme="soft") as app:
             )
         with gr.Column(scale=1):
             submit_btn = gr.Button("Transcribe", variant="primary")
+    
+    error_box = gr.Textbox(label="Error", visible=False)
     
     with gr.Row():
         output_text = gr.Textbox(
@@ -157,8 +190,7 @@ with gr.Blocks(title="Video Transcription", theme="soft") as app:
     submit_btn.click(
         fn=process_video_url,
         inputs=video_url,
-        outputs=output_text,
-        api_name="transcribe"
+        outputs=[output_text, error_box],
     )
 
 if __name__ == "__main__":
