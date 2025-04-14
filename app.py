@@ -1,116 +1,91 @@
 import gradio as gr
-from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api._errors import (
-    TranscriptsDisabled, NoTranscriptFound,
-    VideoUnavailable
-)
-import re
+import os
+import yt_dlp
+from whisper import load_model
+import tempfile
 
-# Supported languages (with Romanian added)
-LANGUAGES = {
-    "Auto (Detect)": "auto",
-    "English": "en",
-    "Romanian": "ro",
-    "Spanish": "es",
-    "French": "fr",
-    "German": "de",
-    "Japanese": "ja",
-    "Italian": "it",
-    "Portuguese": "pt",
-    "Russian": "ru",
-    "Hindi": "hi",
-    "Arabic": "ar"
-}
+# Load Whisper model (load once at startup)
+whisper_model = load_model("base")  # You can change to "small", "medium", etc.
 
-def extract_video_id(url: str) -> str:
-    """Extracts video ID from various YouTube URL formats."""
-    patterns = [
-        r"v=([^&]+)",         # Standard ?v=ID
-        r"youtu\.be/([^?]+)",  # Short URL
-        r"embed/([^/?]+)",     # Embed URL
-        r"/([^/?]+)$"          # Vanity URL
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, url)
-        if match:
-            return match.group(1)
-    return ""
-
-def get_transcript(video_url: str, language_code: str) -> str:
-    """
-    Fetches transcript with support for Romanian and auto-detection.
-    Returns formatted text or error message.
-    """
+def download_and_convert_to_mp3(video_url):
+    # Create a temporary directory to store the audio file
+    temp_dir = tempfile.mkdtemp()
+    output_path = os.path.join(temp_dir, "audio.mp3")
+    
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+        'outtmpl': os.path.join(temp_dir, 'audio'),  # Output template
+        'quiet': True,
+    }
+    
     try:
-        video_id = extract_video_id(video_url)
-        if not video_id:
-            return "❌ Error: Invalid YouTube URL."
-
-        # Handle 'auto' language (fetch first available transcript)
-        if language_code == "auto":
-            transcript = YouTubeTranscriptApi.get_transcript(video_id)
-        else:
-            transcript = YouTubeTranscriptApi.get_transcript(
-                video_id,
-                languages=[language_code]
-            )
-
-        # Format with timestamps
-        return "\n".join(
-            f"[{round(entry['start'], 1)}s] {entry['text']}"
-            for entry in transcript
-        )
-
-    except TranscriptsDisabled:
-        return "❌ Error: Transcripts disabled for this video."
-    except NoTranscriptFound:
-        return f"❌ Error: No {LANGUAGES.get(language_code, language_code)} transcript found."
-    except VideoUnavailable:
-        return "❌ Error: Video unavailable or private."
-    except TooManyRequests:
-        return "❌ Error: Too many requests. Wait and try again."
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([video_url])
+        
+        # Rename the file to have consistent output
+        downloaded_file = os.path.join(temp_dir, "audio.mp3")
+        if not os.path.exists(downloaded_file):
+            # Sometimes the extension might be different
+            for file in os.listdir(temp_dir):
+                if file.startswith("audio."):
+                    downloaded_file = os.path.join(temp_dir, file)
+                    break
+        
+        return downloaded_file
     except Exception as e:
-        return f"❌ Unexpected error: {str(e)}"
+        raise gr.Error(f"Error downloading video: {str(e)}")
 
-# Gradio UI
-with gr.Blocks(theme=gr.themes.Soft(), title="YouTube Transcript Extractor") as app:
+def transcribe_audio(audio_file_path):
+    if not audio_file_path:
+        raise gr.Error("No audio file provided")
+    
+    try:
+        # Transcribe using Whisper
+        result = whisper_model.transcribe(audio_file_path)
+        return result["text"]
+    except Exception as e:
+        raise gr.Error(f"Error during transcription: {str(e)}")
+    finally:
+        # Clean up the temporary file
+        if os.path.exists(audio_file_path):
+            os.remove(audio_file_path)
+
+def process_video_url(video_url):
+    # Step 1: Download and convert to MP3
+    audio_file = download_and_convert_to_mp3(video_url)
+    
+    # Step 2: Transcribe the audio
+    transcription = transcribe_audio(audio_file)
+    
+    return transcription
+
+# Create Gradio interface
+with gr.Blocks() as app:
     gr.Markdown("""
-    # 🇷🇴 YouTube Transcript Extractor  
-    *Supports **Romanian** and 10+ other languages*  
-    *For educational/fair use only*  
+    # Video to Transcription
+    1. Paste a video URL (YouTube or direct video file link)
+    2. The app will download the audio as MP3
+    3. Then transcribe it using OpenAI's Whisper
     """)
-
+    
     with gr.Row():
-        video_url = gr.Textbox(
-            label="YouTube URL",
-            placeholder="Paste any YouTube video link...",
-            max_lines=1
-        )
-        language = gr.Dropdown(
-            label="Language",
-            choices=list(LANGUAGES.keys()),
-            value="Auto (Detect)"
-        )
-
-    btn = gr.Button("Get Transcript", variant="primary")
-    output = gr.Textbox(
-        label="Transcript",
-        interactive=True,
-        lines=15,
-        show_copy_button=True
-    )
-
-    gr.Markdown("""
-    ### ⚠️ Legal Notice  
-    - This tool **does not store** transcripts.  
-    - Only use for **personal, educational, or accessibility purposes**.  
-    - Respect [YouTube's Terms of Service](https://www.youtube.com/t/terms).  
-    """)
-
-    btn.click(
-        fn=get_transcript,
-        inputs=[video_url, language],
-        outputs=output
+        video_url = gr.Textbox(label="Video URL", placeholder="https://www.youtube.com/watch?v=... or https://example.com/video.mp4")
+    
+    with gr.Row():
+        submit_btn = gr.Button("Process")
+    
+    with gr.Row():
+        output_text = gr.Textbox(label="Transcription", interactive=False)
+    
+    submit_btn.click(
+        fn=process_video_url,
+        inputs=video_url,
+        outputs=output_text
     )
 
 if __name__ == "__main__":
