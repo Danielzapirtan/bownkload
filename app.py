@@ -93,7 +93,7 @@ with gr.Blocks(title="Video Transcription") as app:
     transcribe_btn.click(
         fn=process_video,
         inputs=[video_url, model_size],
-        outputs=[output_text, error_box]
+        outputs=output_text
     )
 
 if __name__ == "__main__":
