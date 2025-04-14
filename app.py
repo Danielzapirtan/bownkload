@@ -3,7 +3,7 @@ import os
 from pytube import YouTube
 from pytube.exceptions import PytubeError, VideoUnavailable, RegexMatchError
 import yt_dlp
-import whisper  # Changed from 'from whisper import load_model'
+import whisper
 import tempfile
 import traceback
 from pathlib import Path
