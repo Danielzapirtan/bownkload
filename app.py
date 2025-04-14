@@ -94,7 +94,7 @@ def create_demo() -> gr.Blocks:
                 file_upload = gr.File(
                     label="Or upload file",
                     file_types=["audio", "video"],
-                    type="filepath"
+                    type="file"
                 )
                 
                 # Model selection
@@ -138,7 +138,7 @@ def create_demo() -> gr.Blocks:
         
         # Connect file upload to input source
         file_upload.change(
-            lambda file: file,
+            lambda file: file.name,
             inputs=file_upload,
             outputs=input_source
         )
