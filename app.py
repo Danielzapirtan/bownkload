@@ -40,23 +40,25 @@ def download_from_url(url: str, temp_dir: str = "temp") -> str:
 def transcribe(
     input_source: str,
     model_size: str,
-    progress: gr.Progress
+    progress: gr.Progress = gr.Progress()
 ) -> str:
     """Transcribe audio/video from file path or URL"""
     try:
         start_time = time.time()
         
         # Load model without spinner
+        progress(0, desc="Loading Whisper model...")
         model = whisper.load_model(model_size)
         
         # Determine if input is URL or file
         if is_valid_url(input_source):
+            progress(0.2, desc="Downloading media...")
             media_path = download_from_url(input_source)
         else:
             media_path = input_source
         
         # Transcribe with progress updates
-        progress(0, desc="Starting transcription...")
+        progress(0.5, desc="Starting transcription...")
         result = model.transcribe(media_path)
         
         # Clean up downloaded file if it was from URL
@@ -92,7 +94,7 @@ def create_demo() -> gr.Blocks:
                 file_upload = gr.File(
                     label="Or upload file",
                     file_types=["audio", "video"],
-                    type="file"
+                    type="filepath"
                 )
                 
                 # Model selection
@@ -113,16 +115,15 @@ def create_demo() -> gr.Blocks:
                 )
                 with gr.Row():
                     copy_btn = gr.Button("Copy to Clipboard")
-                    download_btn = gr.Button("Download Result")
+                    clear_btn = gr.Button("Clear")
                 
                 # Timer and progress bar
                 timer = gr.Textbox(label="Processing Time", interactive=False)
-                progress_bar = gr.State(0)
         
         # Event handlers
         submit_btn.click(
             transcribe,
-            inputs=[input_source, model_size, progress_bar],
+            inputs=[input_source, model_size],
             outputs=[output_text],
             api_name="transcribe"
         )
@@ -137,7 +138,7 @@ def create_demo() -> gr.Blocks:
         
         # Connect file upload to input source
         file_upload.change(
-            lambda file: file.name,
+            lambda file: file,
             inputs=file_upload,
             outputs=input_source
         )
@@ -150,16 +151,12 @@ def create_demo() -> gr.Blocks:
             api_name="copy_result"
         )
         
-        # Download button functionality
-        download_btn.click(
-            lambda text: {
-                "name": "transcription.txt",
-                "data": text,
-                "mime_type": "text/plain"
-            },
-            inputs=output_text,
-            outputs=gr.File(label="Download Transcription"),
-            api_name="download_result"
+        # Clear button functionality
+        clear_btn.click(
+            lambda: "",
+            inputs=None,
+            outputs=output_text,
+            api_name="clear_result"
         )
     
     return demo
