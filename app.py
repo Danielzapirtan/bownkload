@@ -104,7 +104,7 @@ with gr.Blocks(title="Video Transcription") as app:
     
     transcribe_btn.click(
         fn=process_input,
-        inputs=[gr.components.Component.merge(video_url, video_file), model_size],
+        inputs=[video_url, video_file, model_size],
         outputs=output_text
     )
 
