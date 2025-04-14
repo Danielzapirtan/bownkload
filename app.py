@@ -49,7 +49,7 @@ def transcribe(
         start_time = time.time()
         
         # Show loading spinner while model loads
-        with gr.spinner(text=f"Loading Whisper {model_size} model..."):
+        with gr.Spinner(text=f"Loading Whisper {model_size} model..."):
             model = whisper.load_model(model_size)
         
         # Determine if input is URL or file
