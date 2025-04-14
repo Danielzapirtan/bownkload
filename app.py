@@ -97,4 +97,4 @@ with gr.Blocks(title="Video Transcription") as app:
     )
 
 if __name__ == "__main__":
-    app.launch()
+    app.launch(share=True, debug=True)
