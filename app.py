@@ -78,8 +78,8 @@ def process_input(video_url, video_file, model_size):
             with open(video_file.name, 'rb') as src, open(audio_path, 'wb') as dst:
                 dst.write(src.read())
         
-#        if not audio_path or not os.path.exists(audio_path):
-#            raise gr.Error("Failed to process audio file")
+        if not audio_path or not os.path.exists(audio_path):
+            raise gr.Error("Failed to process audio file")
         
         # Transcribe
         transcription = transcribe_audio(audio_path, model_size)
