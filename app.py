@@ -56,13 +56,22 @@ def transcribe_audio(audio_path, model_size):
         traceback.print_exc()
         raise gr.Error(f"Transcription failed: {str(e)}")
 
-def process_video(video_url, model_size):
+def process_input(video_input, model_size):
     temp_dir = tempfile.mkdtemp()
     try:
-        # Download audio
-        audio_path = download_audio(video_url, temp_dir)
-        if not audio_path or not os.path.exists(audio_path):
-            raise gr.Error("Failed to download audio file")
+        if isinstance(video_input, str):  # URL case
+            if not video_input.strip():
+                raise gr.Error("Please provide either a URL or upload a video file")
+            
+            # Download audio
+            audio_path = download_audio(video_input, temp_dir)
+        else:  # Uploaded file case
+            audio_path = os.path.join(temp_dir, "uploaded_audio.mp3")
+            # Convert video to audio if needed (whisper can handle video files directly)
+            os.rename(video_input, audio_path)
+        
+        if not os.path.exists(audio_path):
+            raise gr.Error("Failed to process audio file")
         
         # Transcribe
         transcription = transcribe_audio(audio_path, model_size)
@@ -81,18 +90,21 @@ with gr.Blocks(title="Video Transcription") as app:
     gr.Markdown("# 🎥 Video to Transcription")
     
     with gr.Row():
-        video_url = gr.Textbox(label="Video URL", 
-                             placeholder="https://www.youtube.com/watch?v=...")
-        model_size = gr.Dropdown(["tiny", "base", "small", "medium", "large"], 
-                               value="base", label="Model Size")
+        with gr.Column():
+            video_url = gr.Textbox(label="Video URL", 
+                                 placeholder="https://www.youtube.com/watch?v=...")
+            video_file = gr.File(label="Or upload a video file", 
+                              file_types=["video", "audio"])
+            model_size = gr.Dropdown(["tiny", "base", "small", "medium", "large"], 
+                                   value="base", label="Model Size")
     
     transcribe_btn = gr.Button("Transcribe")
     output_text = gr.Textbox(label="Transcription", lines=10)
     error_box = gr.Textbox(label="Error", visible=False)
     
     transcribe_btn.click(
-        fn=process_video,
-        inputs=[video_url, model_size],
+        fn=process_input,
+        inputs=[gr.components.Component.merge(video_url, video_file), model_size],
         outputs=output_text
     )
 
