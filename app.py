@@ -1,167 +1,100 @@
-import ffmpeg
 import gradio as gr
-import whisper
-import re
 import os
-import time
-from urllib.request import urlretrieve
-from pathlib import Path
+from pytube import YouTube
+from pytube.exceptions import PytubeError, VideoUnavailable
+import yt_dlp
+import whisper
+import tempfile
+import traceback
 
-# Predefined clickable URL examples
-EXAMPLE_URLS = [
-    "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-    "https://soundcloud.com/lifeat40/sets/electronic-dreams",
-    "https://www.ted.com/talks/sir_ken_robinson_do_schools_kill_creativity"
-]
-
-# Supported Whisper models
-WHISPER_MODELS = ["tiny", "base", "small", "medium", "large"]
-
-def is_valid_url(text: str) -> bool:
-    """Check if text is a valid URL using regex"""
-    url_pattern = re.compile(
-        r'^(https?://)?'  # http:// or https://
-        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain...
-        r'localhost|'  # localhost...
-        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
-        r'(?::\d+)?'  # optional port
-        r'(?:/?|[/?]\S+)$', re.IGNORECASE)
-    return re.match(url_pattern, text) is not None
-
-def download_from_url(url: str, temp_dir: str = "temp") -> str:
-    """Download media from URL to temporary file"""
-    os.makedirs(temp_dir, exist_ok=True)
-    filename = os.path.join(temp_dir, os.path.basename(url).split("?")[0] + ".mp4")
+def download_audio(video_url, temp_dir):
     try:
-        urlretrieve(url, filename)
-        return filename
-    except Exception as e:
-        raise gr.Error(f"Failed to download from URL: {str(e)}")
+        # Try pytube first for YouTube URLs
+        if "youtube.com" in video_url or "youtu.be" in video_url:
+            try:
+                yt = YouTube(video_url)
+                stream = yt.streams.filter(only_audio=True).order_by('abr').desc().first()
+                if not stream:
+                    raise Exception("No audio stream found")
+                output_path = os.path.join(temp_dir, "audio.mp3")
+                stream.download(output_path=temp_dir, filename="audio.mp3")
+                return output_path
+            except Exception as e:
+                print(f"Pytube failed: {e}")
 
-def transcribe(
-    input_source: str,
-    model_size: str,
-    progress: gr.Progress = gr.Progress()
-) -> str:
-    """Transcribe audio/video from file path or URL"""
-    try:
-        start_time = time.time()
+        # Fallback to yt-dlp
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+            'outtmpl': os.path.join(temp_dir, 'audio'),
+            'quiet': True,
+        }
         
-        # Load model without spinner
-        progress(0, desc="Loading Whisper model...")
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([video_url])
+        
+        # Find the downloaded file
+        for file in os.listdir(temp_dir):
+            if file.startswith("audio."):
+                return os.path.join(temp_dir, file)
+        
+        raise Exception("Failed to download audio")
+    except Exception as e:
+        raise gr.Error(f"Download error: {str(e)}")
+
+def transcribe_audio(audio_path, model_size):
+    try:
+        # Load the selected model
         model = whisper.load_model(model_size)
-        
-        # Determine if input is URL or file
-        if is_valid_url(input_source):
-            progress(0.2, desc="Downloading media...")
-            media_path = download_from_url(input_source)
-        else:
-            media_path = input_source
-        
-        # Transcribe with progress updates
-        progress(0.5, desc="Starting transcription...")
-        result = model.transcribe(media_path)
-        
-        # Clean up downloaded file if it was from URL
-        if input_source != media_path and os.path.exists(media_path):
-            os.remove(media_path)
-        
-        elapsed = time.time() - start_time
-        return f"Transcription completed in {elapsed:.2f} seconds:\n\n{result['text']}"
+        result = model.transcribe(audio_path)
+        return result["text"]
     except Exception as e:
+        traceback.print_exc()
         raise gr.Error(f"Transcription failed: {str(e)}")
 
-def create_demo() -> gr.Blocks:
-    """Create Gradio interface"""
-    with gr.Blocks(title="Whisper Transcription App") as demo:
-        gr.Markdown("# 🎤 OpenAI Whisper Transcription")
-        gr.Markdown("Upload audio/video files or paste URLs to transcribe")
+def process_video(video_url, model_size):
+    temp_dir = tempfile.mkdtemp()
+    try:
+        # Download audio
+        audio_path = download_audio(video_url, temp_dir)
+        if not audio_path or not os.path.exists(audio_path):
+            raise gr.Error("Failed to download audio file")
         
-        with gr.Row():
-            with gr.Column():
-                input_source = gr.Textbox(
-                    label="Media URL or File Path",
-                    placeholder="Paste URL or click examples below..."
-                )
-                
-                # Clickable URL examples
-                gr.Examples(
-                    examples=EXAMPLE_URLS,
-                    inputs=input_source,
-                    label="Try these examples:"
-                )
-                
-                # File upload component
-                file_upload = gr.File(
-                    label="Or upload file",
-                    file_types=["audio", "video"],
-                    type="file"
-                )
-                
-                # Model selection
-                model_size = gr.Dropdown(
-                    choices=WHISPER_MODELS,
-                    value="base",
-                    label="Whisper Model Size",
-                    info="Larger models are more accurate but slower"
-                )
-                
-                submit_btn = gr.Button("Transcribe", variant="primary")
-                
-            with gr.Column():
-                output_text = gr.Textbox(
-                    label="Transcription Result",
-                    interactive=True,
-                    lines=10
-                )
-                with gr.Row():
-                    copy_btn = gr.Button("Copy to Clipboard")
-                    clear_btn = gr.Button("Clear")
-                
-                # Timer and progress bar
-                timer = gr.Textbox(label="Processing Time", interactive=False)
+        # Transcribe
+        transcription = transcribe_audio(audio_path, model_size)
         
-        # Event handlers
-        submit_btn.click(
-            transcribe,
-            inputs=[input_source, model_size],
-            outputs=[output_text],
-            api_name="transcribe"
-        )
-        
-        # Update timer on any change
-        demo.load(
-            None,
-            None,
-            timer,
-            _js="() => {const start = new Date(); return () => Math.round((new Date() - start)/1000) + ' seconds'}"
-        )
-        
-        # Connect file upload to input source
-        file_upload.change(
-            lambda file: file.name,
-            inputs=file_upload,
-            outputs=input_source
-        )
-        
-        # Copy button functionality
-        copy_btn.click(
-            lambda text: gr.Clipboard().copy(text),
-            inputs=output_text,
-            outputs=None,
-            api_name="copy_result"
-        )
-        
-        # Clear button functionality
-        clear_btn.click(
-            lambda: "",
-            inputs=None,
-            outputs=output_text,
-            api_name="clear_result"
-        )
+        return transcription
+    except Exception as e:
+        raise gr.Error(str(e))
+    finally:
+        # Clean up
+        if os.path.exists(temp_dir):
+            for f in os.listdir(temp_dir):
+                os.remove(os.path.join(temp_dir, f))
+            os.rmdir(temp_dir)
+
+with gr.Blocks(title="Video Transcription") as app:
+    gr.Markdown("# 🎥 Video to Transcription")
     
-    return demo
+    with gr.Row():
+        video_url = gr.Textbox(label="Video URL", 
+                             placeholder="https://www.youtube.com/watch?v=...")
+        model_size = gr.Dropdown(["tiny", "base", "small", "medium", "large"], 
+                               value="base", label="Model Size")
+    
+    transcribe_btn = gr.Button("Transcribe")
+    output_text = gr.Textbox(label="Transcription", lines=10)
+    error_box = gr.Textbox(label="Error", visible=False)
+    
+    transcribe_btn.click(
+        fn=process_video,
+        inputs=[video_url, model_size],
+        outputs=[output_text, error_box]
+    )
 
 if __name__ == "__main__":
-    demo = create_demo()
-    demo.launch(enable_queue=True)
+    app.launch()
