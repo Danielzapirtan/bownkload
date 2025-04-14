@@ -1,118 +1,97 @@
 import gradio as gr
 import os
-from pytube import YouTube
-from pytube.exceptions import PytubeError, VideoUnavailable
-import yt_dlp
-from yt_dlp.utils import DownloadError
-import whisper
 import tempfile
-import traceback
-import time  # For simulating download progress
+from urllib.parse import urlparse
+import requests
+from pytube import YouTube
+import whisper
 
-def download_audio(video_url, temp_dir, progress=gr.Progress()):
+# Initialize the Whisper model (load only once)
+model = whisper.load_model("base")  # You can change to "small", "medium", etc. based on your needs
+
+def is_valid_url(url):
     try:
-        progress(0, desc="Initializing download...")
-        # Try pytube first for YouTube URLs
-        if "youtube.com" in video_url or "youtu.be" in video_url:
-            try:
-                yt = YouTube(video_url, on_progress_callback=lambda stream, chunk, bytes_remaining: progress((stream.filesize - bytes_remaining) / stream.filesize, desc="Downloading audio (pytube)..."))
-                stream = yt.streams.filter(only_audio=True).order_by('abr').desc().first()
-                if not stream:
-                    raise Exception("No audio stream found")
-                output_path = os.path.join(temp_dir, "audio.mp3")
-                stream.download(output_path=temp_dir, filename="audio.mp3")
-                return output_path, None
-            except Exception as e:
-                print(f"Pytube failed: {e}")
+        result = urlparse(url)
+        return all([result.scheme, result.netloc])
+    except:
+        return False
 
-        # Fallback to yt-dlp
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }],
-            'outtmpl': os.path.join(temp_dir, 'audio'),
-            'quiet': True,
-            'progress_hooks': [lambda d: progress(d['downloaded_bytes'] / d['total_bytes'] if 'total_bytes' in d and d['total_bytes'] else None, desc="Downloading audio (yt-dlp)...") if d['status'] == 'downloading' else None],
-        }
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            try:
-                ydl.download([video_url])
-            except DownloadError as e:
-                raise Exception(str(e))
-
-        # Find the downloaded file
-        for file in os.listdir(temp_dir):
-            if file.startswith("audio."):
-                return os.path.join(temp_dir, file), None
-
-        raise Exception("Failed to download audio")
-    except Exception as e:
-        return None, f"Download error: {str(e)}"
-
-def transcribe_audio(audio_path, model_size, progress=gr.Progress()):
+def download_video_from_url(url):
+    """Download video from URL (supports YouTube and direct video links)"""
     try:
-        progress(0, desc="Loading model...")
-        model = whisper.load_model(model_size)
-        progress(0.1, desc="Transcribing audio...")
-        result = model.transcribe(audio_path)
-        return result["text"], None
+        # Handle YouTube URLs
+        if "youtube.com" in url or "youtu.be" in url:
+            yt = YouTube(url)
+            stream = yt.streams.filter(only_audio=True).first()
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+            stream.download(filename=temp_file.name)
+            return temp_file.name
+        
+        # Handle direct video URLs
+        else:
+            response = requests.get(url, stream=True)
+            if response.status_code == 200:
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+                for chunk in response.iter_content(chunk_size=8192):
+                    temp_file.write(chunk)
+                temp_file.close()
+                return temp_file.name
+            else:
+                raise Exception(f"Failed to download video. HTTP status: {response.status_code}")
     except Exception as e:
-        traceback.print_exc()
-        return None, f"Transcription failed: {str(e)}"
+        raise Exception(f"Error downloading video: {str(e)}")
 
-def process_video(video_url, model_size, progress=gr.Progress()):
-    temp_dir = tempfile.mkdtemp()
+def transcribe_video(video_file, url):
+    """Transcribe video from either file or URL"""
     try:
-        # Download audio
-        audio_path, download_error = download_audio(video_url, temp_dir, progress)
-        if download_error:
-            return "", download_error
-
-        if not audio_path or not os.path.exists(audio_path):
-            return "", "Failed to download audio file"
-
-        # Transcribe
-        transcription, transcribe_error = transcribe_audio(audio_path, model_size, progress)
-        if transcribe_error:
-            return "", transcribe_error
-
-        return transcription, None
+        # Determine input source
+        if video_file is not None:
+            video_path = video_file
+        elif url and is_valid_url(url):
+            video_path = download_video_from_url(url)
+        else:
+            return "Please provide either a video file or a valid URL"
+        
+        # Transcribe the audio
+        result = model.transcribe(video_path)
+        
+        # Clean up temporary files
+        if url and is_valid_url(url) and os.path.exists(video_path):
+            os.unlink(video_path)
+            
+        return result["text"]
+    
     except Exception as e:
-        return "", str(e)
-    finally:
-        # Clean up
-        if os.path.exists(temp_dir):
-            for f in os.listdir(temp_dir):
-                os.remove(os.path.join(temp_dir, f))
-            os.rmdir(temp_dir)
+        return f"Error during transcription: {str(e)}"
 
-with gr.Blocks(title="Video Transcription") as app:
-    gr.Markdown("# 🎥 Video to Transcription")
-
+# Gradio interface
+with gr.Blocks(title="Video Transcription App") as app:
+    gr.Markdown("""
+    # Video Transcription App
+    Upload a video file or paste a video URL to get a transcription.
+    """)
+    
     with gr.Row():
-        video_url = gr.Textbox(label="Video URL",
-                             placeholder="Enter video URL here...")
-        model_size = gr.Dropdown(["tiny", "base", "small", "medium", "large"],
-                               value="base", label="Model Size")
-
-    transcribe_btn = gr.Button("Transcribe")
-    output_text = gr.Textbox(label="Transcription", lines=10)
-    error_box = gr.Textbox(label="Error", visible=True)  # Make error box visible
-    progress_bar = gr.State(0)
-
-    gr.Markdown("### Example URLs:")
-    gr.Markdown("- YouTube: `https://www.youtube.com/watch?v=dQw4w9WgXcQ`")
-    gr.Markdown("- Vimeo: `https://vimeo.com/170478648`")
-    gr.Markdown("- Bilibili: `https://www.bilibili.com/video/BV1x7411V7YF`")
-
-    transcribe_btn.click(
-        fn=process_video,
-        inputs=[video_url, model_size, progress_bar],
-        outputs=[output_text, error_box]
+        with gr.Column():
+            video_input = gr.Video(label="Upload Video File", sources=["upload"])
+            url_input = gr.Textbox(label="OR Paste Video URL", placeholder="https://www.youtube.com/watch?v=...")
+            submit_btn = gr.Button("Transcribe")
+        
+        with gr.Column():
+            output_text = gr.Textbox(label="Transcription", lines=20, interactive=True)
+            clear_btn = gr.Button("Clear")
+    
+    # Define button actions
+    submit_btn.click(
+        fn=transcribe_video,
+        inputs=[video_input, url_input],
+        outputs=output_text
+    )
+    
+    clear_btn.click(
+        fn=lambda: [None, "", ""],
+        inputs=[],
+        outputs=[video_input, url_input, output_text]
     )
 
 if __name__ == "__main__":
