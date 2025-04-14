@@ -56,15 +56,15 @@ def transcribe_audio(audio_path, model_size):
         traceback.print_exc()
         raise gr.Error(f"Transcription failed: {str(e)}")
 
-def process_input(video_input, video_file, model_size):
+def process_input(video_url, video_file, model_size):
     temp_dir = tempfile.mkdtemp()
     try:
-        if isinstance(video_input, str):  # URL case
-            if not video_input.strip():
+        if isinstance(video_url, str):  # URL case
+            if not video_url.strip():
                 raise gr.Error("Please provide either a URL or upload a video file")
             
             # Download audio
-            audio_path = download_audio(video_input, temp_dir)
+            audio_path = download_audio(video_url, temp_dir)
         else:  # Uploaded file case
             audio_path = os.path.join(temp_dir, "uploaded_audio.mp3")
             # Convert video to audio if needed (whisper can handle video files directly)
