@@ -1,15 +1,29 @@
 import gradio as gr
 import os
 from pytube import YouTube
-from pytube.exceptions import PytubeError, VideoUnavailable
+from pytube.exceptions import PytubeError, VideoUnavailable, RegexMatchError
 import yt_dlp
 from whisper import load_model
 import tempfile
 import traceback
 from pathlib import Path
+import re
 
 # Load Whisper model
 whisper_model = load_model("base")  # Can change to "small", "medium", etc.
+
+def is_valid_url(url):
+    """Basic URL validation"""
+    youtube_regex = (
+        r'(https?://)?(www\.)?'
+        '(youtube|youtu|youtube-nocookie)\.(com|be)/'
+        '(watch\?v=|embed/|v/|.+\?v=)?([^&=%\?]{11})')
+    
+    generic_url_regex = (
+        r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|'
+        r'[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+')
+    
+    return re.match(youtube_regex, url) or re.match(generic_url_regex, url)
 
 def is_youtube_url(url):
     return "youtube.com" in url or "youtu.be" in url
@@ -20,7 +34,8 @@ def download_yt_with_pytube(video_url, temp_dir):
         
         # Check if video is available
         if yt.vid_info.get('playabilityStatus', {}).get('status', '').lower() == 'error':
-            raise VideoUnavailable(yt.vid_info['playabilityStatus']['reason'])
+            reason = yt.vid_info['playabilityStatus'].get('reason', 'Video unavailable')
+            raise VideoUnavailable(reason)
         
         # Skip live streams
         if yt.vid_info.get('videoDetails', {}).get('isLive', False):
@@ -31,6 +46,7 @@ def download_yt_with_pytube(video_url, temp_dir):
             raise PytubeError("No audio stream available")
         
         output_path = os.path.join(temp_dir, "audio.mp3")
+        print(f"Downloading with pytube to: {output_path}")
         audio_stream.download(output_path=temp_dir, filename="audio.mp3")
         
         if not os.path.exists(output_path):
@@ -42,9 +58,12 @@ def download_yt_with_pytube(video_url, temp_dir):
                 raise PytubeError("Downloaded file not found")
         
         return output_path
+    except RegexMatchError:
+        raise gr.Error("Invalid YouTube URL format")
     except VideoUnavailable as e:
         raise gr.Error(f"YouTube video unavailable: {str(e)}")
     except Exception as e:
+        traceback.print_exc()
         raise gr.Error(f"Pytube error: {str(e)}")
 
 def download_with_ytdlp(video_url, temp_dir):
@@ -60,36 +79,60 @@ def download_with_ytdlp(video_url, temp_dir):
             'quiet': True,
             'ignoreerrors': True,
             'no_warnings': True,
-            'extract_flat': True,
+            'extract_flat': False,
+            'socket_timeout': 10,
+            'extractor_args': {
+                'youtube': {
+                    'skip': ['dash', 'hls']
+                }
+            }
         }
         
+        print(f"Attempting to download with yt-dlp: {video_url}")
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(video_url, download=False)
-            if not info:
-                raise gr.Error("Could not extract video info")
-            
-            # Skip live streams
-            if info.get('is_live', False):
-                raise gr.Error("Live streams are not supported")
-            
-            if info.get('_type', 'video') != 'video':
-                raise gr.Error("Only single videos are supported (not playlists)")
-            
-            ydl.download([video_url])
+            try:
+                info = ydl.extract_info(video_url, download=False)
+                if not info:
+                    raise gr.Error("Could not extract video info - the video may be private or restricted")
+                
+                # Skip live streams
+                if info.get('is_live', False):
+                    raise gr.Error("Live streams are not supported")
+                
+                if info.get('_type', 'video') != 'video':
+                    raise gr.Error("Only single videos are supported (not playlists)")
+                
+                print(f"Downloading with yt-dlp: {info.get('title', '')}")
+                ydl.download([video_url])
+            except yt_dlp.utils.DownloadError as e:
+                if "Private video" in str(e):
+                    raise gr.Error("This is a private video (login required)")
+                elif "Members-only" in str(e):
+                    raise gr.Error("This is a members-only video")
+                elif "This video is not available" in str(e):
+                    raise gr.Error("Video not available in your country or removed")
+                else:
+                    raise
         
         # Find the downloaded file
         for file in os.listdir(temp_dir):
             if file.startswith("audio."):
                 return os.path.join(temp_dir, file)
         
-        raise gr.Error("Failed to download audio")
+        raise gr.Error("Failed to download audio - no valid file found")
     except Exception as e:
+        traceback.print_exc()
+        if "unable to extract video info" in str(e).lower():
+            raise gr.Error("Could not access video info - the video may be private, age-restricted, or unavailable")
         raise gr.Error(f"YT-DLP error: {str(e)}")
 
 def download_and_convert_to_mp3(video_url):
     temp_dir = tempfile.mkdtemp()
     
     try:
+        if not is_valid_url(video_url):
+            raise gr.Error("Invalid URL format")
+        
         if is_youtube_url(video_url):
             try:
                 return download_yt_with_pytube(video_url, temp_dir)
@@ -102,8 +145,14 @@ def download_and_convert_to_mp3(video_url):
         # Clean up temp dir if error occurs
         if os.path.exists(temp_dir):
             for file in os.listdir(temp_dir):
-                os.remove(os.path.join(temp_dir, file))
-            os.rmdir(temp_dir)
+                try:
+                    os.remove(os.path.join(temp_dir, file))
+                except:
+                    pass
+            try:
+                os.rmdir(temp_dir)
+            except:
+                pass
         raise
 
 def transcribe_audio(audio_file_path):
@@ -120,11 +169,11 @@ def transcribe_audio(audio_file_path):
         # Clean up the audio file and its directory
         if audio_file_path and os.path.exists(audio_file_path):
             temp_dir = os.path.dirname(audio_file_path)
-            os.remove(audio_file_path)
             try:
+                os.remove(audio_file_path)
                 os.rmdir(temp_dir)
-            except OSError:
-                pass  # Directory not empty or already deleted
+            except:
+                pass
 
 def process_video_url(video_url, progress=gr.Progress()):
     try:
@@ -152,7 +201,9 @@ with gr.Blocks(title="Video Transcription", theme="soft") as app:
     # 🎥 Video to Transcription
     Convert YouTube or other video URLs to text using Whisper AI
     
-    **Note**: Live streams and age-restricted videos may not work
+    **Note**: 
+    - Live streams, private videos, and age-restricted videos may not work
+    - For YouTube links, tries pytube first, then falls back to yt-dlp
     """)
     
     with gr.Row():
@@ -184,14 +235,21 @@ with gr.Blocks(title="Video Transcription", theme="soft") as app:
                 ["https://www.youtube.com/watch?v=JGwWNGJdvx8"]
             ],
             inputs=video_url,
-            label="Try these examples"
+            label="Try these examples (click to load)"
         )
     
     submit_btn.click(
         fn=process_video_url,
         inputs=video_url,
-        outputs=[output_text, error_box],
+        outputs=output_text,
     )
 
 if __name__ == "__main__":
+    # Check if yt-dlp is up to date
+    try:
+        with yt_dlp.YoutubeDL() as ydl:
+            ydl.update()
+    except:
+        print("Could not update yt-dlp, continuing with current version")
+    
     app.launch()
