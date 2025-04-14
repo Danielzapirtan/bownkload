@@ -1,3 +1,4 @@
+import ffmpeg
 import gradio as gr
 import whisper
 import re
