@@ -102,7 +102,7 @@ with gr.Blocks(title="Video Transcription") as app:
     transcribe_btn = gr.Button("Transcribe")
     output_text = gr.Textbox(label="Transcription", lines=10)
     error_box = gr.Textbox(label="Error", visible=True)  # Make error box visible
-    progress_bar = gr.Progress()
+    progress_bar = gr.State(0)
 
     gr.Markdown("### Example URLs:")
     gr.Markdown("- YouTube: `https://www.youtube.com/watch?v=dQw4w9WgXcQ`")
