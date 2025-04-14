@@ -54,7 +54,7 @@ def transcribe(
         
         # Determine if input is URL or file
         if is_valid_url(input_source):
-            with gr.spinner(text="Downloading media from URL..."):
+            with gr.Spinner(text="Downloading media from URL..."):
                 media_path = download_from_url(input_source)
         else:
             media_path = input_source
