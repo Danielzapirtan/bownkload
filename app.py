@@ -132,7 +132,7 @@ with gr.Blocks(title="Video Transcription Tool") as app:
             video_file = gr.File(
                 label="Or upload your own video/audio file", 
                 file_types=["video", "audio"],
-                type="filepath"
+                type="file"
             )
             model_size = gr.Dropdown(
                 ["tiny", "base", "small", "medium", "large"], 
