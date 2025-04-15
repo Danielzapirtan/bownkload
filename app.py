@@ -155,7 +155,7 @@ with gr.Blocks(title="Video Transcription Tool") as app:
 
 if __name__ == "__main__":
     app.launch(
-        share=True,  # Disable public sharing for legal compliance
+        share=False,  # Disable public sharing for legal compliance
         debug=True,
         server_name="0.0.0.0",
         server_port=7860
