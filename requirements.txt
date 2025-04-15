@@ -1,5 +1,5 @@
 ffmpeg
 yt-dlp
 openai-whisper
-gradio==4.44.1
+gradio
 pytube
